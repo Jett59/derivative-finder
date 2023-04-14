@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign, Index, Mul, MulAssign, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Deref, DerefMut, Index, Mul, MulAssign, Sub, SubAssign};
 
 pub trait ElementType:
     Clone
@@ -98,6 +98,12 @@ impl<T: ElementType> Matrix<T> {
                 .map(|column| (0..rows).map(|row| self[(row, column)].clone()).collect())
                 .collect(),
         )
+    }
+
+    pub fn sum(&self) -> T {
+        self.values
+            .iter()
+            .fold(T::default(), |acc, x| acc + x.clone())
     }
 }
 
@@ -213,6 +219,91 @@ impl<T: ElementType> Sub<&Matrix<T>> for &Matrix<T> {
     }
 }
 
+pub struct Variable<T: ElementType> {
+    id: usize,
+    value: Matrix<T>,
+}
+
+impl<T: ElementType> Variable<T> {
+    pub fn new(initial_value: Matrix<T>) -> Self {
+        Self {
+            id: 0, // Must be set by the `Computation`.
+            value: initial_value,
+        }
+    }
+}
+
+impl<T: ElementType> Deref for Variable<T> {
+    type Target = Matrix<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl<T: ElementType> DerefMut for Variable<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.value
+    }
+}
+
+pub struct Computation<T: ElementType> {
+    operations: Vec<Box<dyn Operation<T>>>,
+    variable_count: usize,
+}
+
+impl<T: ElementType> Computation<T> {
+    pub fn new() -> Self {
+        Self {
+            operations: Vec::new(),
+            variable_count: 0,
+        }
+    }
+
+    pub fn register_variable(&mut self, variable: &mut Variable<T>) {
+        variable.id = self.variable_count;
+        self.variable_count += 1;
+    }
+
+    pub fn add_operation(&mut self, mut operation: Box<dyn Operation<T>>) {
+        operation.register_variables(self);
+        self.operations.push(operation);
+    }
+
+    pub fn evaluate(&self, input: Matrix<T>) -> Matrix<T> {
+        let mut result = input;
+        for operation in self.operations.iter() {
+            result = operation.evaluate(result);
+        }
+        result
+    }
+
+    pub fn derivative(&self, input: Matrix<T>, variable: usize) -> Matrix<T> {
+        let mut derivative = Matrix::new(Vec::new());
+        let mut value = input;
+        for operation in &self.operations {
+            if operation.has_variable(variable) {
+                derivative = operation.derivative_of_variable(&value, variable);
+            } else {
+                derivative = &operation.derivative_of_input(&value) * &derivative;
+            }
+            value = operation.evaluate(value);
+        }
+        derivative
+    }
+}
+
 pub trait Operation<T: ElementType> {
+    fn register_variables(&mut self, computation: &mut Computation<T>);
+
     fn evaluate(&self, input: Matrix<T>) -> Matrix<T>;
+
+    /// Calculate the derivative with respect to the input.
+    fn derivative_of_input(&self, input: &Matrix<T>) -> Matrix<T>;
+    /// Calculate the derivative with respect to the variable given the input.
+    /// This function will only be called if `has_variable(variable)` returns true.
+    /// Therefore if there is only one variable for this operation it is safe to ignore the value of `variable`.
+    fn derivative_of_variable(&self, input: &Matrix<T>, variable: usize) -> Matrix<T>;
+
+    fn has_variable(&self, variable_id: usize) -> bool;
 }
