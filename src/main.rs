@@ -1,4 +1,3 @@
-mod compute;
-mod operations;
+mod value;
 
 fn main() {}
