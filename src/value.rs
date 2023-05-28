@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    fmt::Debug,
     ops::{Add, Div, Mul, Neg, Sub},
     rc::Rc,
     sync::atomic::AtomicUsize,
@@ -39,9 +40,30 @@ impl Variable {
     pub fn id(&self) -> usize {
         self.id
     }
+
+    pub fn as_value(self) -> Value {
+        Value::from(self)
+    }
 }
 
-#[derive(Clone)]
+impl PartialEq for Variable {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Variable {}
+
+impl Debug for Variable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Variable")
+            .field("id", &self.id)
+            .field("value", &self.get())
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug)]
 enum Operation {
     Add(Vec<Value>),
     Multiply(Vec<Value>),
@@ -141,6 +163,46 @@ impl Value {
                 operation: Some(Operation::Reciprocal(Box::new(self))),
                 cached_value: None,
             },
+        }
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.operation.as_ref(), other.operation.as_ref()) {
+            (None, None) => self.cached_value.unwrap() == other.cached_value.unwrap(),
+            (
+                Some(Operation::Variable(self_variable)),
+                Some(Operation::Variable(other_variable)),
+            ) => self_variable == other_variable,
+            (Some(Operation::Add(self_values)), Some(Operation::Add(other_values))) => {
+                self_values == other_values
+            }
+            (Some(Operation::Multiply(self_values)), Some(Operation::Multiply(other_values))) => {
+                self_values == other_values
+            }
+            (Some(Operation::Reciprocal(self_value)), Some(Operation::Reciprocal(other_value))) => {
+                self_value == other_value
+            }
+            (Some(Operation::Negate(self_value)), Some(Operation::Negate(other_value))) => {
+                self_value == other_value
+            }
+            // They are not the same type of operation.
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
+
+impl Debug for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(ref operation) = self.operation {
+            operation.fmt(f)
+        } else {
+            self.cached_value
+                .expect("Missing value for constant")
+                .fmt(f)
         }
     }
 }
@@ -250,5 +312,78 @@ impl Div for Value {
     #[allow(clippy::suspicious_arithmetic_impl)] // Because we are using multiplication in the division implementation.
     fn div(self, rhs: Self) -> Self::Output {
         self * rhs.reciprocal()
+    }
+}
+
+impl From<Variable> for Value {
+    fn from(variable: Variable) -> Self {
+        Value::variable(variable)
+    }
+}
+
+trait Constant: Into<f64> {
+    fn into_value(self) -> Value {
+        Value::constant(self.into())
+    }
+}
+
+impl<T: Into<f64>> Constant for T {}
+
+impl<T: Constant> From<T> for Value {
+    fn from(value: T) -> Self {
+        value.into_value()
+    }
+}
+
+macro_rules! impl_binary_operator_with_constant {
+    ($trait:ident, $method:ident) => {
+        impl<T> $trait<T> for Value
+        where
+            T: Constant,
+        {
+            type Output = Self;
+
+            fn $method(self, rhs: T) -> Self::Output {
+                self.$method(rhs.into_value())
+            }
+        }
+    };
+}
+
+impl_binary_operator_with_constant!(Add, add);
+impl_binary_operator_with_constant!(Sub, sub);
+impl_binary_operator_with_constant!(Mul, mul);
+impl_binary_operator_with_constant!(Div, div);
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn gets_correct_result() {
+        let initial_value = 1.into_value();
+        let mut calculation = (initial_value + 2 + 3) * 7 / 2;
+        assert_eq!(calculation.evaluate(), 21.0);
+
+        let variable = Variable::new();
+        let mut calculation1 = Value::from(variable.clone()) + calculation;
+        variable.assign(8.5);
+        assert_eq!(calculation1.evaluate(), 29.5);
+        variable.assign(12.0);
+        assert_eq!(calculation1.evaluate(), 33.0);
+    }
+
+    #[test]
+    fn simplifies_correctly() {
+        let initial_value = 1.into_value();
+        let calculation = (initial_value + 2 + 3) * 7 / 2;
+        assert_eq!(calculation, 21.into_value());
+
+        let variable = Variable::new();
+        let calculation1 = (variable.clone().as_value() + 3 + 7) / variable.clone().as_value();
+        // It shouldn't simplify (at least in its current implementation).
+        let expected_after_simplification =
+            (variable.clone().as_value() + 3 + 7) / variable.clone().as_value();
+        assert_eq!(calculation1, expected_after_simplification);
     }
 }
