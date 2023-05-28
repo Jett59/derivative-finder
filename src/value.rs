@@ -380,10 +380,21 @@ mod test {
         assert_eq!(calculation, 21.into_value());
 
         let variable = Variable::new();
-        let calculation1 = (variable.clone().as_value() + 3 + 7) / variable.clone().as_value();
+        let mut calculation1 = (variable.clone().as_value() + 3 + 7) / variable.clone().as_value();
         // It shouldn't simplify (at least in its current implementation).
         let expected_after_simplification =
             (variable.clone().as_value() + 3 + 7) / variable.clone().as_value();
         assert_eq!(calculation1, expected_after_simplification);
+        // FOr good measure, let's see that it gets the right answer.
+        variable.assign(2.0);
+        assert_eq!(calculation1.evaluate(), 6.0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn panics_when_variable_not_set() {
+        let variable = Variable::new();
+        let mut calculation = variable.as_value() + 3;
+        calculation.evaluate();
     }
 }
